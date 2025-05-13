@@ -6,11 +6,9 @@ This repository contains R code for forecasting Bitcoin growth using various tim
 
 ## Overview
 
-This project compares the performance of different time series models—AR(1), VAR, and U-MIDAS—for forecasting Bitcoin price growth using macroeconomic indicators and mixed-frequency data from FRED.
+This project compares the performance of different time series models—AR(1), VAR, and U-MIDAS—for forecasting Bitcoin price growth using macroeconomic indicators and mixed-frequency data from FRED. The objective is to evaluate whether incorporating high-frequency macroeconomic information improves forecast accuracy, measured by Root Mean Squared Forecast Error (RMSFE). In this analysis, the AR(1) model achieved the lowest RMSFE, suggesting that adding macroeconomic indicators did not lead to better forecasting performance.
 
-The objective is to evaluate whether incorporating high-frequency macroeconomic information improves forecast accuracy, measured by Root Mean Squared Forecast Error (RMSFE).
-
-In this analysis, the AR(1) model achieved the lowest RMSFE, suggesting that adding macroeconomic indicators did not lead to better forecasting performance.
+More details about this project can be found in the Project Information PDF file included in this repository.
 
 ---
 
