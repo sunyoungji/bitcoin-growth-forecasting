@@ -1,0 +1,851 @@
+---
+title bit
+author Sunyoung Ji
+date `r Sys.Date()`
+output pdf_document
+---
+
+```{r setup, include=FALSE}
+knitropts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(midasr) # for mls()
+library(vars) # for VARselect() (AIC)
+library(lmtest) # for Granger Causality Test
+
+```
+# pakages
+```{r}
+citation(tidyverse)
+citation(midasr)
+toBibtex(citation('vars'))
+citation(lmtest)
+packageVersion(midasr)
+```
+```{r data loading, include=FALSE}
+btc_raw -read.csv(bitcoin_data.csv, sep=;)
+fred_raw - read.csv(FRED-QD.csv)
+```
+
+To get the growth rate of the S&P 500 and the inflation rate at quarterly frequency, we manipulate the dataset. `fred_raw` is the quarterly data from 2010 Q3 to 2022 Q4.
+
+```{r}
+fred_data - fred_raw[209nrow(fred_raw),] %%
+  dplyrselect(UNRATE,CPIAUCSL,FEDFUNDS,S.P.500)
+
+fred_data - fred_data %%
+  mutate(SP500 = (S.P.500 - lag(S.P.500))  lag(S.P.500)  100) %%
+  mutate(INFLATION = (CPIAUCSL - lag(CPIAUCSL))  lag(CPIAUCSL)  100)
+```
+
+`btc_raw` is the daily data of value of Bitcoin from 13th Jul 2010 to 29th Mar 2023. We manipulate this dataset to the quarterlymonthly growth rate.
+
+```{r}
+btc_data - btc_raw %%
+  mutate(center = (high + low)  2) 
+
+btc_data  - btc_data %%
+  mutate(separate(btc_data, timestamp, c(date, time), sep = T))
+btc_data$new.date = as.Date(as.character(btc_data$date))
+btc_data$quarter = as.yearqtr(btc_data$new.date)
+btc_data$month = as.yearmon(btc_data$new.date)
+sum(is.na(btc_data)) # 0
+
+q_btc_data - btc_data %%
+  group_by(quarter) %%
+  summarise(avg = exp(mean(log(center)))) %%
+  mutate(BTC = ((avg - lag(avg))  lag(avg) ) 100)
+
+m_btc_data - btc_data %%
+  group_by(month) %%
+  summarise(avg = exp(mean(log(center)))) %%
+  mutate(BTC = ((avg - lag(avg))  lag(avg) ) 100)
+
+```
+
+```{r}
+df - cbind(q_btc_data[250,c(1,3)],fred_data[250,c(1,3,5,6)])
+
+# normalizing data for plotting
+norm - scale(df[,-1])
+norm - cbind(df, norm)
+norm - norm[,-c(26)]
+```
+
+# (a) 
+
+# (b) 
+`should we make a graph with 5 variables`
+
+`BTC` that has larger variance makes lines of other variables appear flat. Normalization allows us meaningful comparison by scaling the variables to a similar range. As we can see the graphs below, the shape of each graph remains almost unchanged regardless of normalization.
+
+```{r}
+# convert data to long format
+pivot - function(x) {
+  pivot_longer(x, cols = -quarter, 
+               names_to = Variable, 
+               values_to = Value)
+}
+
+df_long - pivot(df)
+colnames(norm) - c(quarter, Bitcoin Growth Rate, Unemployment Rate, Federal Funds Rate, S&P500 Growth rate, Inflation)
+norm_long - pivot(norm)
+
+a - pivot(norm[,c(13)])
+b - pivot(norm[,c(12,4)])
+c - pivot(norm[,c(12,5)])
+d - pivot(norm[,c(12,6)])
+# create plot using facets
+plot_func - function(pivot, use_facets = TRUE) {
+  if (use_facets) {
+    ggplot(pivot, aes(x = quarter, y = Value, color = Variable)) +
+      geom_line() +
+      facet_wrap(~Variable, scales = free_y) +
+      labs(
+        x = Time, y = Rate (%)) +
+      scale_color_discrete(name = ,
+                           labels = label)+
+      theme(legend.position = right, legend.text = element_text(size = 12),
+            legend.title = element_text(size = 14))
+  } else {
+    ggplot(pivot, aes(x = quarter, y = Value, color = Variable)) +
+      geom_line() +
+      labs(
+        x = Time, y = Rate (%)) +
+      scale_color_discrete(name = 
+                           )+
+      theme(legend.position = right, legend.text = element_text(size = 12),
+            legend.title = element_text(size = 14))
+  }
+}
+
+
+plot_func(a, FALSE)
+plot_func(b, FALSE)
+plot_func(c, FALSE)
+plot_func(d, FALSE)
+
+plot_func(norm_long, FALSE)
+
+```
+
+
+
+# (c) AR(1)
+
+The AR(1) population model of a time series $Y_t$ is
+$$Y_t=beta_0+beta_1Y_{t-1}+u_t$$
+For the Bitcoin growth rate series ($BITGR_t$), the AR(1) model is estimated by computing OLS estimates
+$$widehat{BTCGR_t} = hat{beta_0} + hat{beta_1}BTCGR_{t-1}$$
+
+
+Therefore, forecasts $BTCGR_{T+1}$ are based on the fitted values with the model
+$$widehat{BTCGR_{T+1}} = hat{beta_0} + hat{beta_1} widehat{BTCGR}_{T}$$
+
+
+
+```{r}
+n - length(df$BTC) 
+ar_int - rep(NA,n)
+ar_coef - rep(NA,n)
+AR1 - rep(NA,n)
+
+BTC - as.matrix(df$BTC)
+
+for (i in 3n) {
+  x - cbind(1,df$BTC[1(i-1)])
+  y - df$BTC[2i]
+  
+  mx - solve(t(x) %% x) %% t(x) %% y
+  ar_int[i] - mx[1,]
+  ar_coef[i] - mx[2,]
+  AR1[i+1] - ar_int[i] + ar_coef[i] %% df$BTC[i]
+}
+```
+
+
+
+
+# (d) VAR(1)
+```{r}
+
+n - length(df$BTC)
+var_1_coef - matrix(0, nrow = n, ncol = 6)
+VAR1 - rep(NA, n)
+
+for (i in 7n) {
+  x - cbind(1,df[1(i-1),-1])
+  y - df$BTC[2i]
+  
+  x - as.matrix(x)
+  y - as.matrix(y)
+  
+  mx - solve(t(x) %% x) %% t(x) %% y
+  var_1_coef[i,] - mx[,1]
+  
+  var_coef - as.matrix(var_1_coef)
+  dfmx1 - cbind(1,df[,-1])
+  dfmx1 - as.matrix(dfmx1)
+  
+  VAR1[i+1] - var_1_coef[i,] %% dfmx1[i,]
+}
+
+```
+
+# (e)
+
+```{r}
+grangertest(df$BTC ~ df$UNRATE, order=1)
+grangertest(df$BTC ~ df$FEDFUNDS, order=1)
+grangertest(df$BTC ~ df$SP500, order=1)
+grangertest(df$BTC ~ df$INFLATION, order=1)
+```
+
+# (f)
+
+The AIC in Kilian and Lütkepohl, 2017 (p. 55) is
+$$AIC(m) = ln det(tilde{sum}_u(m)) + frac{2}{T }(mK^2+K)$$
+To use this AIC, we adjust the result from the AIC of `VARselect()` which is based on the formula.
+$$AIC(m) = ln det(tilde{sum}_u(m)) + frac{2}{T }$$
+,m the number of lags
+$tilde{sum}_u(m))=frac{1}{T} sum_{t=1}^{T}hat{u_t}hat{u}'_t$ residual covariance matrix estimator for a model of order $m$, 
+T sample size
+K the number of parameters that have to be estimated in a Var(m)
+We can include deterministic regressors by selecting `type = const`. 
+
+
+```{r}
+round(VARselect(df[,-1], lag.max = 3,
+          type=const)[[criteria]][1,],4)
+
+# We can find detailed structure of the function
+# for example, criteria[1, i] - log(sigma.det) + (2sample)  (i  K^2 + K  detint)
+
+```
+
+# var(2)
+Based on AIC criterion, we choose $p=2$ as the order of VAR(p)
+```{r}
+
+
+n - length(df$BTC)
+var_2_coef - matrix(0, nrow = n, ncol = 11)
+VAR2 - rep(NA, n)
+
+for (i in 13n) {
+
+  y - df$BTC[3i]
+  x1l - df[2(i-1),-1]
+  x2l - df[1(i-2),-1]
+  x - cbind(1, x1l, x2l)
+  colnames(x) - c(Intercept, BTC_1L, UNRATE_1L, FEDFUNDS_1L,
+                   SP500_1L, INFLATION_1L, BTC_2L, UNRATE_2, 
+                   FEDFUNDS_2L,SP500_2L, INFLATION_2L)
+  
+  
+  x - as.matrix(x)
+  y - as.matrix(y)
+  mx - solve(t(x) %% x) %% t(x) %% y
+  var_2_coef[i,] - mx[,1]
+  
+  var_2_coef - as.matrix(var_2_coef)
+  dfmx2 - as.matrix(df[,-1])
+  
+  VAR2[i+1] - var_2_coef[i,1] +
+    var_2_coef[i,26] %% dfmx2[i,] +
+    var_2_coef[i,711] %% dfmx2[i-1,] 
+}
+
+```
+
+# manipulating FRED-MD
+```{r}
+fred_md_raw - read.csv(FRED-MD.csv)
+m_btc_data
+
+fred_md - fred_md_raw[622769,]
+btc_md - m_btc_data[c(4150),c(1,3)]
+# from Sep 2010 to Dec 2022
+fred_md - fred_md[c(sasdate,UNRATE,CPIAUCSL,FEDFUNDS,S.P.500)]
+fred_md - fred_md %%
+mutate(SP500 = (S.P.500 - lag(S.P.500))  lag(S.P.500)  100) %%
+mutate(INFLATION = (CPIAUCSL - lag(CPIAUCSL))  lag(CPIAUCSL)  100)
+fred_md - fred_md[-1,-c(3,5)] # from Oct 2010 to Dec 2022
+md_data - cbind(btc_md, fred_md[,-1])
+
+```
+
+For $K=2$ and $s=2$,
+$$g_{y,6} = mu_{0} + mu_{1}g_{y,3} + Phi'_{0}X_{5} + Phi'_{1}X_{4} + Phi'_{2}X_{3} + epsilon_{3s}$$
+For $s^ = 10$,
+$$hat{g}_{y,30} = hat{mu}_{027} + hat{mu}_{127}g_{y,27} + hat{Phi}'_{027}X_{29} + hat{Phi}'_{127}X_{28} + hat{Phi}'_{227}X_{27}$$
+
+# U-MIDAS with k=1
+```{r}
+
+g - df$BTC[2length(df$BTC)]
+g_1l - df$BTC[1length(df$BTC)-1]
+n - length(df$BTC)
+UNRATE - mls(fred_md$UNRATE, k = 12, m = 3) # k from 3s-1 to 3s-3
+FEDFUNDS - mls(fred_md$FEDFUNDS, k = 12, m = 3)
+SP500 - mls(fred_md$SP500, k = 12, m = 3)
+INFLATION - mls(fred_md$INFLATION, k = 12, m = 3)
+
+
+################### AIC ################### 
+# with the whole sample
+set1 - cbind(g_1l, UNRATE[-1,], FEDFUNDS[-1,],
+              SP500[-1,], INFLATION[-1,])
+lm1 - lm(g~set1)
+AIC(lm1) # 597.9881
+summary(lm1)
+# without UNRATE_1L
+set11 - cbind(g_1l, UNRATE[-1,2], FEDFUNDS[-1,],
+              SP500[-1,], INFLATION[-1,])
+lm11 - lm(g~set11)
+AIC(lm11) # 601.1786
+###########################################  
+
+
+
+
+
+
+UM1 - rep(NA,n)
+um_1_coef - matrix(NA, nrow = n, ncol = 10)
+colnames(um_1_coef) - c(Intercept, BTC_1L, UNRATE_1L, 
+                       UNRATE_2L, FEDFUNDS_1L, 
+                       FEDFUNDS_2L, SP500_1L, 
+                       SP500_2L, INFLATION_1L, 
+                       INFLATION_2L)
+
+
+for (i in 11n) {
+  y - df$BTC[2i]
+  x - cbind(1,  df$BTC[1i-1],
+             UNRATE[2i,], FEDFUNDS[2i,], 
+             SP500[2i,], INFLATION[2i,])
+  colnames(x) - c(Intercept, BTC_1L, UNRATE_1L, 
+                       UNRATE_2L, FEDFUNDS_1L, 
+                       FEDFUNDS_2L, SP500_1L, 
+                       SP500_2L, INFLATION_1L, 
+                       INFLATION_2L)
+  
+  lm - lm(y ~ x) 
+  # AIC 597.9881 when we set i = 49
+  um_1_coef[i,] - summary(lm)$coefficients[,1]
+
+    UM1[i+1] - um_1_coef[i,1] + 
+    um_1_coef[i,2] %% df$BTC[i] +
+    um_1_coef[i,34] %% UNRATE[i,] +
+    um_1_coef[i,56] %% FEDFUNDS[i,] +
+    um_1_coef[i,78] %% SP500[i,] +
+    um_1_coef[i,910] %% INFLATION[i,] 
+}
+
+
+```
+
+U-MIDAS model with k=1 works better without UNRATE_1L.
+```{r}
+
+UM11 - rep(NA,n)
+um_11_coef - matrix(NA, nrow = n, ncol = 9)
+colnames(um_11_coef) - c(Intercept, BTC_1L, 
+                       UNRATE_2L, FEDFUNDS_1L, 
+                       FEDFUNDS_2L, SP500_1L, 
+                       SP500_2L, INFLATION_1L, 
+                       INFLATION_2L)
+
+for (i in 10n) {
+  y - df$BTC[2i]
+  x - cbind(1,  df$BTC[1i-1],
+             UNRATE[2i,2], FEDFUNDS[2i,], 
+             # choose only UNRATE_2L without UNRATE_1L
+             SP500[2i,], INFLATION[2i,])
+  colnames(x) - c(Intercept, BTC_1L, 
+                       UNRATE_2L, FEDFUNDS_1L, 
+                       FEDFUNDS_2L, SP500_1L, 
+                       SP500_2L, INFLATION_1L, 
+                       INFLATION_2L)
+  
+  lm - lm(y ~ x)
+  um_11_coef[i,] - summary(lm)$coefficients[,1]
+#  UM11[i+1] - um_11_coef[i,] %% set11[i,]
+  
+   UM11[i+1] - um_11_coef[i,1] + 
+    um_11_coef[i,2] %% df$BTC[i] +
+    um_11_coef[i,3] %% UNRATE[i] +
+    um_11_coef[i,45] %% FEDFUNDS[i,] +
+    um_11_coef[i,67] %% SP500[i,] +
+    um_11_coef[i,89] %% INFLATION[i,] 
+}
+
+
+
+um_df - df[1nrow(df), c(1,2)]
+um_df[50,] - NA
+UM1[111] - NA
+UM11[110] - NA
+um_df - cbind(um_df,UM1,UM11)
+colnames(um_df) - c(quarter, Bitcoin Growth Rate, U-MIDAS, Adjusted U-MIDAS)
+um_long - pivot(um_df)
+plot_func(um_long, FALSE)
+
+
+RMSFE.UM11 - rep(NA, n)
+RMSFE.UM1 - rep(NA, n)
+for (i in 11n) {
+  RMSFE.UM11[i] - sqrt(mean((df$BTC[in] - UM11[in])^2))
+}
+for (i in 12n) {
+  RMSFE.UM1[i] - sqrt(mean((df$BTC[in] - UM1[in])^2))
+}
+
+RMSFE.UM1.ts - ts(RMSFE.UM1, frequency = 4, start = c(2010,4))
+RMSFE.UM11.ts - ts(RMSFE.UM11, frequency = 4, start = c(2010,4))
+plot(RMSFE.UM11.ts, type = l, col = red)
+lines(RMSFE.UM1.ts, type = l)
+lines(UM1, type = l)
+lines(UM11, type = l)
+
+
+
+sqrt(mean((df$BTC[1214] - UM1[1214])^2)) -
+sqrt(mean((df$BTC[1214] - UM11[1214])^2))
+
+sqrt(mean((df$BTC[1546] - UM1[1546])^2)) -
+sqrt(mean((df$BTC[1546] - UM11[1546])^2))
+
+sqrt(mean((df$BTC[4749] - UM1[4749])^2)) -
+sqrt(mean((df$BTC[4749] - UM11[4749])^2))
+```
+
+
+# U-MIDAS with k=2
+```{r}
+
+g - df$BTC[2length(df$BTC)]
+g_1l - df$BTC[1length(df$BTC)-1]
+
+UNRATE - mls(fred_md$UNRATE, k = 13, m = 3) # k from 3s-1 to 3s-3
+FEDFUNDS - mls(fred_md$FEDFUNDS, k = 13, m = 3)
+SP500 - mls(fred_md$SP500, k = 13, m = 3)
+INFLATION - mls(fred_md$INFLATION, k = 13, m = 3)
+
+################### AIC ################### 
+# with whole sample
+set2 - cbind(g_1l, UNRATE[-1,], FEDFUNDS[-1,],
+              SP500[-1,], INFLATION[-1,])
+lm2 - lm(g~set2)
+summary(lm2)
+AIC(lm2) # 604.4774
+# without UNRATE_1L
+set22 - cbind(g_1l, UNRATE[-1,-1], FEDFUNDS[-1,],
+              SP500[-1,], INFLATION[-1,])
+lm22 - lm(g~set22)
+AIC(lm22) # 607.4229
+###########################################  
+
+
+n - length(df$BTC)
+UM2 - rep(NA,n)
+um_2_coef - matrix(NA, nrow = n, ncol = 14)
+
+
+for (i in 15n) {
+  y - df$BTC[2i]
+  x - cbind(1,  df$BTC[1i-1],
+             UNRATE[2i,], FEDFUNDS[2i,], 
+             SP500[2i,], INFLATION[2i,])
+  colnames(x) - c(Intercept, BTC_1L, UNRATE_1L, 
+                       UNRATE_2L, UNRATE_3L, FEDFUNDS_1L, 
+                       FEDFUNDS_2L, FEDFUNDS_3L, SP500_1L, 
+                       SP500_2L, SP500_3L, INFLATION_1L, 
+                       INFLATION_2L, INFLATION_3L)
+  
+  lm - lm(y~x) 
+  um_2_coef[i,] - summary(lm)$coefficients[,1]
+  
+  UM2[i+1] - um_2_coef[i,1] + 
+    um_2_coef[i,2] %% df$BTC[i] +
+    um_2_coef[i,35] %% UNRATE[i,] +
+    um_2_coef[i,68] %% FEDFUNDS[i,] +
+    um_2_coef[i,911] %% SP500[i,] +
+    um_2_coef[i,1214] %% INFLATION[i,] 
+}
+
+
+```
+
+#U-MIDAS with k=3
+```{r}
+
+g - df$BTC[2length(df$BTC)]
+g_1l - df$BTC[1length(df$BTC)-1]
+
+UNRATE - mls(fred_md$UNRATE, k = 14, m = 3) # k from 3s-1 to 3s-3
+FEDFUNDS - mls(fred_md$FEDFUNDS, k = 14, m = 3)
+SP500 - mls(fred_md$SP500, k = 14, m = 3)
+INFLATION - mls(fred_md$INFLATION, k = 14, m = 3)
+
+
+
+################### AIC ################### 
+# with whole sample
+set3 - cbind(g_1l, UNRATE[-1,], FEDFUNDS[-1,],
+              SP500[-1,], INFLATION[-1,])
+lm3 - lm(g~set3)
+summary(lm3)
+AIC(lm3) # 607.6752
+
+# without UNRATE_1L
+set33 - cbind(g_1l, UNRATE[-1,-1], FEDFUNDS[-1,],
+              SP500[-1,], INFLATION[-1,])
+lm33 - lm(g~set33)
+AIC(lm33) # 607.3775
+
+AIC(lm11)
+AIC(lm22)
+###########################################  
+
+n - length(df$BTC)
+UM3 - rep(NA,n)
+um_3_coef - matrix(NA, nrow = n, ncol = 18)
+
+for (i in 19n) {
+  y - df$BTC[2i]
+  x - cbind(1,  df$BTC[1i-1],
+             UNRATE[2i,], FEDFUNDS[2i,], 
+             SP500[2i,], INFLATION[2i,])
+  colnames(x) - c(Intercept, BTC_1L, UNRATE_1L, 
+                       UNRATE_2L, UNRATE_3L, UNRATE_4L ,FEDFUNDS_1L, 
+                       FEDFUNDS_2L, FEDFUNDS_3L,FEDFUNDS_4L, SP500_1L, 
+                       SP500_2L, SP500_3L,SP500_4L, INFLATION_1L, 
+                       INFLATION_2L, INFLATION_3L, INFLATION_4L)
+  
+  lm - lm(y~x) 
+  um_3_coef[i,] - summary(lm)$coefficients[,1]
+  
+    UM3[i+1] - um_3_coef[i,1] + 
+    um_3_coef[i,2] %% df$BTC[i] +
+    um_3_coef[i,36] %% UNRATE[i,] +
+    um_3_coef[i,710] %% FEDFUNDS[i,] +
+    um_3_coef[i,1114] %% SP500[i,] +
+    um_3_coef[i,1518] %% INFLATION[i,] 
+}
+
+
+```
+# plots and rmsfe for models with quarterly btc growth rate
+
+```{r}
+
+
+RMSFE.AR1 - rep(NA, n)
+sqrt(mean((df$BTC[7n] - AR1[7n])^2))
+round(sqrt(mean((df$BTC[ii+3] - AR1[ii+3])^2)),4)
+
+i - 46
+round(sqrt(mean((df$BTC[ii+3] - VAR1[ii+3])^2)),4)
+round(sqrt(mean((df$BTC[ii+3] - VAR2[ii+3])^2)),4)
+
+RMSFE.VAR1 - rep(NA, n)
+RMSFE.VAR2 - rep(NA, n)
+for (i in 7i) {
+  RMSFE.VAR1[i] - sqrt(mean((df$BTC[in] - VAR1[in])^2))
+}
+for (i in 13i) {
+  RMSFE.VAR2[i] - sqrt(mean((df$BTC[in] - VAR2[in])^2))
+}
+
+
+RMSFE.UM1 - sqrt(mean((df$BTC[12n] - UM1[12n])^2))
+RMSFE.UM11 - sqrt(mean((df$BTC[11n] - UM11[11n])^2))
+RMSFE.UM2 - sqrt(mean((df$BTC[16n] - UM2[16n])^2))
+RMSFE.UM3 - sqrt(mean((df$BTC[19n] - UM3[19n])^2))
+
+RMSFE.AR1 - sqrt(mean((df$BTC[4n] - AR1[4n])^2))
+RMSFE.VAR1 - sqrt(mean((df$BTC[8n] - VAR1[8n])^2))
+RMSFE.VAR2 - sqrt(mean((df$BTC[14n] - VAR2[14n])^2))
+
+
+```
+
+
+```{r plots}
+
+   
+q_df - df[,12]
+q_df[50,] - NA
+q_df - cbind(q_df,VAR2)
+q_long - pivot(q_df)
+plot_func(q_long, FALSE)
+
+q_df - df[,12]
+q_df - cbind(q_df,RMSFE.UM1, RMSFE.UM11)
+q_df - q_df[-c(18),]
+colnames(q_df) - c(quarter, Bitcoin Growth Rate,  U-MIDAS(1) RMSFE, Adjusted U-MIDAS(1) RMSFE)
+q_long - pivot(q_df)
+ump-  plot_func(q_long,FALSE)
+ump  + geom_vline(xintercept = 2014.25, linetype = dashed, color = black)+ geom_vline(xintercept = 2022.25, linetype = dashed, color = black)
+
+```
+
+
+
+
+# var(6) with monthly btc growth rate
+```{r}
+
+round(VARselect(md_data[,-1], lag.max = 12,
+          type=const)[[criteria]],4)
+
+
+dd - cbind(1, md_data[6(n-1),26], md_data[5(n-2),26],
+            md_data[4(n-3),26] , md_data[3(n-4),26] ,
+            md_data[2(n-5),26] , md_data[1(n-6),26] )
+colnames(dd) - c(Intercept,BTC_1L, UNRATE_1L, FEDFUNDS_1L, SP500_1L, INFLATION_1L,BTC_2L, UNRATE_2L, FEDFUNDS_2L, SP500_2L, INFLATION_2L,BTC_3L, UNRATE_3L, FEDFUNDS_3L, SP500_3L, INFLATION_3L,BTC_4L, UNRATE_4L, FEDFUNDS_4L, SP500_4L, INFLATION_4L,BTC_5L, UNRATE_5L, FEDFUNDS_5L, SP500_5L, INFLATION_5L,BTC_6L, UNRATE_6L, FEDFUNDS_6L, SP500_6L, INFLATION_6L) 
+
+n - nrow(md_data)
+var_6_coef - matrix(NA, nrow = n, ncol = 31)
+VAR6 - rep(NA, n)
+  
+
+
+for (i in 37n) {
+
+  y - md_data[7i,2]
+  x1l - md_data[6(i-1),26]
+  x2l - md_data[5(i-2),26]
+  x3l - md_data[4(i-3),26] 
+  x4l - md_data[3(i-4),26] 
+  x5l - md_data[2(i-5),26] 
+  x6l - md_data[1(i-6),26] 
+  x - cbind(1, x1l, x2l, x3l, x4l, x5l, x6l)
+  colnames(x) - c(Intercept,BTC_1L, UNRATE_1L, FEDFUNDS_1L, SP500_1L, INFLATION_1L,BTC_2L, UNRATE_2L, FEDFUNDS_2L, SP500_2L, INFLATION_2L,BTC_3L, UNRATE_3L, FEDFUNDS_3L, SP500_3L, INFLATION_3L,BTC_4L, UNRATE_4L, FEDFUNDS_4L, SP500_4L, INFLATION_4L,BTC_5L, UNRATE_5L, FEDFUNDS_5L, SP500_5L, INFLATION_5L,BTC_6L, UNRATE_6L, FEDFUNDS_6L, SP500_6L, INFLATION_6L)
+  
+  x - as.matrix(x)
+  y - as.matrix(y)
+  mx - solve(t(x) %% x) %% t(x) %% y
+  var_6_coef[i,] - mx[,1]
+
+  var_6_coef - as.matrix(var_6_coef)
+  md_mx - as.matrix(md_data[,-1])
+  
+  VAR6[i+1] - var_6_coef[i,1] +
+    var_6_coef[i,26] %% md_mx[i,] +
+    var_6_coef[i,711] %% md_mx[i-1,] +
+    var_6_coef[i,1216] %% md_mx[i-2,] +
+    var_6_coef[i,1721] %% md_mx[i-3,] +
+    var_6_coef[i,2226] %% md_mx[i-4,] +
+    var_6_coef[i,2731] %% md_mx[i-5,] 
+}
+  
+
+
+
+
+```
+# ar(1) with monthly btc growth rate
+```{r}
+n - length(md_data$BTC) 
+arm_int - rep(NA,n)
+arm_coef - rep(NA,n)
+AR1M - rep(NA,n)
+
+BTC - as.matrix(md_data$BTC)
+
+for (i in 3n) {
+  x - cbind(1,md_data$BTC[1(i-1)])
+  y - md_data$BTC[2i]
+  
+  mx - solve(t(x) %% x) %% t(x) %% y
+  arm_int[i] - mx[1,]
+  arm_coef[i] - mx[2,]
+  AR1M[i+1] - arm_int[i] + arm_coef[i] %% md_data$BTC[i]
+}
+```
+
+# var(1) and var(2) with monthly btc growth rate
+```{r}
+
+n - length(md_data$BTC)
+var_1m_coef - matrix(NA, nrow = n, ncol = 6)
+VAR1M - rep(NA, n)
+
+for (i in 7n) {
+  x - cbind(1,md_data[1(i-1),-1])
+  y - md_data$BTC[2i]
+  
+  x - as.matrix(x)
+  y - as.matrix(y)
+  
+  mx - solve(t(x) %% x) %% t(x) %% y
+  var_1m_coef[i,] - mx[,1]
+  
+  var_1m_coef - as.matrix(var_1m_coef)
+  dfmx1 - md_data[,-1]
+  dfmx1 - as.matrix(dfmx1)
+  
+  VAR1M[i+1] - var_1m_coef[i,1] + var_1m_coef[i,-1] %% dfmx1[i,]
+}
+
+var_2m_coef - matrix(NA, nrow = n, ncol = 11)
+VAR2M - rep(NA, n)
+
+for (i in 13n) {
+  y - md_data$BTC[3i]
+  x1l - md_data[2(i-1),-1]
+  x2l - md_data[1(i-2),-1]
+  x - cbind(1, x1l, x2l)
+  colnames(x) - c(Intercept, BTC_1L, UNRATE_1L, FEDFUNDS_1L,
+                     SP500_1L, INFLATION_1L, BTC_2L, UNRATE_2, 
+                     FEDFUNDS_2L,SP500_2L, INFLATION_2L)
+  
+  x - as.matrix(x)
+  y - as.matrix(y)
+  
+  mx - solve(t(x) %% x) %% t(x) %% y
+  var_2m_coef[i,] - mx[,1]
+  colnames(var_2m_coef) - c(Intercept, BTC_1L, UNRATE_1L, FEDFUNDS_1L,
+                     SP500_1L, INFLATION_1L, BTC_2L, UNRATE_2, 
+                     FEDFUNDS_2L,SP500_2L, INFLATION_2L)
+  
+  var_2m_coef - as.matrix(var_2m_coef)
+  dfmx2 - md_data[,-1]# remove month column
+  dfmx2 - as.matrix(dfmx1)
+  
+  VAR2M[i+1] - var_2m_coef[i,1] +
+  var_2m_coef[i,c(26)] %% dfmx2[i,] +
+  var_2m_coef[i,c(711)] %% dfmx2[i-1,]
+}
+
+```
+
+# additional VAR(1) with only btc_1l and S&P500_1l
+```{r}
+
+n - length(md_data$BTC)
+cc - matrix(NA, nrow = n, ncol = 3)
+mm - rep(NA, n)
+
+for (i in 4n) {
+  x - cbind(1,md_data[1(i-1),c(2,5)])
+  y - md_data$BTC[2i]
+  
+  x - as.matrix(x)
+  y - as.matrix(y)
+  
+  mx - solve(t(x) %% x) %% t(x) %% y
+  cc[i,] - mx[,1]
+  
+  cc - as.matrix(cc)
+  dfmx1 - as.matrix(md_data[,-1])
+  
+  mm[i+1] - cc[i,1] + cc[i,-1] %% dfmx1[i,c(1,4)]
+}
+ee - rep(NA,n)
+for (i in 5n) {
+  ee[i] - round(sqrt(mean((md_data$BTC[in] - mm[in])^2)),3)
+}
+round(sqrt(mean((md_data$BTC[17n] - mm[17n])^2)),4) #33.821
+m_df - md_data[,12]
+m_df[nrow(m_df)+1,] - NA
+m_df - cbind(m_df[12n,c(1,2)],mm[12n])
+colnames(m_df) - c(quarter, Bitcoin Growth Rate,Adjusted VAR(1) Forecast)
+# change the column names month to quarter just for plotting and nothing else
+m_long - pivot(m_df)
+plot_func(m_long, FALSE)
+```
+
+# plots and rmsfe with monthly btc growth rate
+
+```{r}
+
+seq - seq(40, 147, by = 12)
+RMSFE.AR1M - rep(NA, 9)
+RMSFE.VAR1M - rep(NA, 9)
+RMSFE.VAR6 - rep(NA, 9)
+
+for (i in seq) {
+  RMSFE.AR1M[i] - round(sqrt(mean((md_data$BTC[ii+11] - AR1M[ii+11])^2)),4)
+  RMSFE.VAR1M[i] - round(sqrt(mean((md_data$BTC[ii+11] - VAR1M[ii+11])^2)),4)
+  RMSFE.VAR6[i] - round(sqrt(mean((md_data$BTC[ii+11] - VAR6[ii+11])^2)),4)
+}
+#RMSFE.AR1M
+round(sqrt(mean((md_data$BTC[ii+11] - AR1M[ii+11])^2)),4)
+#RMSFE.VAR1M 
+round(sqrt(mean((md_data$BTC[ii+11] - VAR1M[ii+11])^2)),4)
+#RMSFE.VAR2M 
+#sqrt(mean((md_data$BTC[14n] - VAR2M[14n])^2))
+#RMSFE.VAR6 
+round(sqrt(mean((md_data$BTC[ii+11] - VAR6[ii+11])^2)),3)
+
+
+```
+
+
+```{r plots}
+
+m_df - md_data[,12]
+m_df[nrow(m_df)+1,] - NA
+m_df - cbind(m_df,AR1M, VAR1M, VAR2M,VAR6)
+colnames(m_df) - c(quarter, Bitcoin Growth Rate,   AR(1) Forecast,
+                    VAR(1) Forecast, VAR(2) Forecast, VAR(6) Forecast )
+# change the column names month to quarter just for plotting and nothing else
+m_long - pivot(m_df)
+plot_func(m_long, FALSE)
+
+m_df - md_data[,12]
+m_df[nrow(m_df)+1,] - NA
+m_df - cbind(m_df,AR1M, VAR1M,VAR6)
+colnames(m_df) - c(quarter, Bitcoin Growth Rate,   AR(1) Forecast,
+                    VAR(1) Forecast, VAR(6) Forecast )
+# change the column names month to quarter just for plotting and nothing else
+m_long - pivot(m_df)
+plot_func(m_long, FALSE)
+
+
+m_df - md_data[,12]
+m_df[nrow(m_df)+1,] - NA
+m_df - cbind(m_df,AR1M)
+colnames(m_df) - c(quarter, Bitcoin Growth Rate,   AR(1) Forecast)
+# change the column names month to quarter just for plotting and nothing else
+m_long - pivot(m_df)
+z - plot_func(m_long, FALSE)
+
+
+m_df - md_data[,12]
+m_df[nrow(m_df)+1,] - NA
+m_df - cbind(m_df, VAR1M)
+colnames(m_df) - c(quarter, Bitcoin Growth Rate,
+                    VAR(1) Forecast)
+                    # change the column names month to quarter just for plotting and nothing else
+m_long - pivot(m_df)
+zz - plot_func(m_long, FALSE)
+
+
+m_df - md_data[,12]
+m_df[nrow(m_df)+1,] - NA
+m_df - cbind(m_df,VAR2M)
+colnames(m_df) - c(quarter, Bitcoin Growth Rate,VAR(2) Forecast )
+# change the column names month to quarter just for plotting and nothing else
+m_long - pivot(m_df)
+plot_func(m_long, FALSE)
+
+m_df - md_data[,12]
+m_df[nrow(m_df)+1,] - NA
+m_df - cbind(m_df,VAR6)
+colnames(m_df) - c(quarter, Bitcoin Growth Rate,VAR(6) Forecast )
+# change the column names month to quarter just for plotting and nothing else
+m_long - pivot(m_df)
+zzz - plot_func(m_long, FALSE)
+```
+
+# dataset summary
+```{r}
+df_summary - summary(df[,-1])
+df_md_summary - summary(md_data[,-1])
+```
+
+
