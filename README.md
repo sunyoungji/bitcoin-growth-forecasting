@@ -24,7 +24,7 @@ In this analysis, the AR(1) model achieved the lowest RMSFE, suggesting that add
 
 ---
 
-## 📂 Data
+## Data
 
 ### Bitcoin Data
 
